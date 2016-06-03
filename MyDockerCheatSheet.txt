@@ -1,0 +1,218 @@
+sudo apt-get install docker.io
+Building a interactive docker container
+1. sudo docker run -t -i --name myFirstContainer ubuntu:14.04 /bin/bash
+2. Once created, you are inside the docker filesystem & can run ls, top etc.
+3. This docker container runs till the command we have given is executed, in this case /bin/bash
+
+To check all the running docker container
+1. sudo docker ps -l
+To check the stopped docker container
+1. sudo docker ps -a
+To remove a docker container
+1. sudo docker rm myFirstContainer
+To see all the docker images
+1. sudo docker images
+   <in this case returns ubuntu image>
+To add a tar image
+1. docker load --input myimage.tgz
+To delete a image
+1. docker rmi 08d432da3
+
+Creating images from Dockerfile
+1.Its good practice to not create this in your root dir as everything in the context is created there that might overwrite your system's files. Hence create that in a empty directory
+2. vi Dockerfile
+   FROM ubuntu:14.04    <The base image that the dockercontainer will use>
+   MAINTAINER sumit <sksumit1@gmail.com>
+   RUN apt-get update   <the commands that docker will run to build your image>
+   RUN apt-get install -y openssh-server
+   RUN cp /etc/ssh/sshd_config /etc/ssh/sshd_config.original
+   RUN mkdir /var/run/sshd   <Imp command, without this even though your docker container will be created, it won't run>
+   CMD <json>  startup scripts, use " instead of '  , e.g. CMD {"/usr/sbin/sshd", "-D"}  -Only one CMD allowd
+   EXPOSE 22
+3. sudo docker build -t sumitdotcom/ubuntusshd:snapshot .
+4. sudo docker run -d -P --name testsshd sumitdotcom/ubuntusshd:snapshot
+
+
+Creating docker image with apache
+1. vi Dockerfile
+    FROM ubuntu:14.04
+    MAINTAINER sumit <sksumit1@gmail.com>
+    RUN apt-get update
+    RUN apt-get install -y apache2
+    RUN mkdir -p /var/lock/apache2 /var/run/apache2
+    ENV APACHE_RUN_USER www-data
+    ENV APACHE_RUN_GROUP www-data
+    ENV APACHE_PID_FILE /var/run/apache2.pid
+    ENV APACHE_RUN_DIR /var/run/apache2
+    ENV APACHE_LOCK_DIR /var/lock/apache2
+    ENV APACHE_LOG_DIR /var/log/apache2
+    ENV LANG C
+    CMD ["/usr/sbin/apache2", "-D", "FOREGROUND"]
+    EXPOSE 80
+2. sudo docker build -t sumitdotcom/ubuntuapache:snapshot .
+3. sudo docker run -d -P --name myapp sumitdotcom/ubuntuapache:snapshot
+
+Mount dockerhost directories into the docker container
+1. sudo docker run -d -v /location/of/dir/in/dockerhost:/location/inside/docker/container -P --name myapp sumitdotcom/ubuntuapache:snapshot
+or docker run -d -v /location/of/dir/in/dockerhost:/location/inside/docker/container -p 127.0.0.1:43306:80 --name myapp sumitdotcom/ubuntuapache:snapshot
+2. To verify run
+    sudo docker inspect | myapp 
+    this will give the running docker information in a json format
+
+NOTE:- If you are running on mac, run docker-machine ip default to get output
+
+$docker run -d -v /location/of/dir/in/dockerhost:/location/inside/docker/container -P --name myapp sumitdotcom/ubuntuapache:snapshot
+85c5f20daefa8a21695b1f9e33434c457e0f393a1e6b3a7e456b800f9847d946
+$ docker port myapp
+80/tcp -> 0.0.0.0:32770
+$ docker ps -l
+CONTAINER ID        IMAGE                               COMMAND                  CREATED             STATUS              PORTS                   NAMES
+85c5f20daefa        sumitdotcom/ubuntuapache:snapshot   "/usr/sbin/apache2 -D"   18 seconds ago      Up 14 seconds       0.0.0.0:32770->80/tcp   myapp
+
+$ docker-machine ip default
+192.168.99.100
+
+TEST : http://192.168.99.100:32770/
+
+Using supervisors in docker
+In docker there can be one CMD, what if you want to run multiple
+E.g. in this case sshd and apache2
+Hence create a new docker container using the above 2 docker containers
+You can use
+    1. bash scripts
+    2. use supervisor
+        
+Implementing supervisor
+1. vi Dockerfile
+    FROM ubuntu:14.04
+    MAINTAINER sumit <sksumit1@gmail.com>
+    RUN apt-get update && apt-get install -y openssh-server apache2 supervisor
+    RUN mkdir -p /var/lock/apache2 /var/run/apache2 /var/run/sshd /var/log/supervisor
+    RUN cp /etc/ssh/sshd_config /etc/ssh/sshd_config.original
+    RUN chmod a-w /etc/ssh/sshd_config.original
+    RUN echo 'root:password' | chpasswd
+    RUN sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+    COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+    EXPOSE 22 80
+    CMD ["/usr/bin/supervisord"]
+2. vi supervisord.conf
+    [supervisord]
+    #we don't want it to run as a daemon
+    nodaemon=true
+    
+    [program:sshd]
+    command=/usr/sbin/sshd -D
+    
+    [program:apache2]
+    command=/bin/bash -c "source /etc/apache2/envvars && exec /usr/sbin/apache2 -DFOREGROUND"
+3. sudo docker build -t sumitdotcom/ubuntusupervisor:snapshot .
+4. sudo docker run -d -P -v /location/of/dir/in/dockerhost:/location/inside/docker/container --name supervisortest sumitdotcom/ubuntusupervisor:snapshot
+
+For debugging the logs
+docker logs b52b42db49ca8f1fc45cfd9e7cd93c7cfc2437d74975392e2652b3665a88a94f (container_id)
+
+Linking docker containers
+
+We will run and link docker containers, one running mysql and another running apache
+
+1. sudo docker run --name mysqldb -e MYSQL_ROOT_PASSWORD=password -d mysql:5.5
+    sudo docker ps -l
+2. sudo docker run --name mylinkedweb --link mysqldb:dbalias -d sumitdotcom/ubuntuapache2:snapshot
+    sudo docker ps -l
+3. Some environment variables get set for mylinkedweb. A new entry in the /etc/hosts of mylinkedweb for mysqldb
+4. E.g. (for knowing the environments)
+        sudo docker run --rm --link mysqldb:dbalaias1 sumitdotcom/ubuntuapache2:snapshot env
+        
+        prints
+        HOME=/
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
+        HOSTNAME=fdajhfda
+        DBALIAS1_PORT=tcp://172.31.1.1:3306
+        DBALIAS1_PORT_3306_TCP=tcp://172.31.1.1:3306
+        DBALIAS1_PORT_3306_TCP_ADDR=172.31.1.1
+        DBALIAS1_PORT_3306_TCP_PORT=3306
+        DBALIAS1_PORT_3306_TCP_PROTO=tcp
+        DBALIAS1_NAME=/high_torvalds/dbalias1
+        DBALIAS1_ENV_MYSQL_ROOT_PASSWORD=password
+        DBALIAS1_ENV_MYSQL_MAJOR=5.5
+        DBALIAS1_ENV_MYSQL_VERSION=5.5.41
+        APACHE_RUN_USER=www-data
+        APACHE_RUN_GROUP=www-data
+        APACHE_PID_FILE=/var/run/apache2.pid
+        APACHE_RUN_DIR=/var/run/apache2
+        APACHE_LOCK_DIR=/var/lock/apache2
+        APACHE_LOG_DIR=/var/log/apache2
+        LANG=C
+        
+        sudo docker run --rm --link mysqldb:dbalias1 sumitdotcom/ubuntuapache2:snapshot cat /etc/hosts
+        
+        prints
+        a new entry for dbalais2
+        172.31.1.1  dbalias1
+        
+        What happens in mysql container is restarted?
+        Docker container for the parent container (in this case the apache container) automatically updates itself whenever the mysql container is back up and running
+        
+How to take backup of data running inside a docker container
+
+1. sudo docker run --name myapache2 -v /var/log/apache2 -d sumitdotcom/ubuntuapache2:snapshot
+2. sudo docker ps -l
+3. sudo docker run --rm --volumes-from myapache2 -v /home/dockerhost/backup:/backup ubuntu:14.04 tar cvf /backup/backup./tar /var/log/apache2
+
+Dockerfile's best practices
+
+1. Add comments. Comments starts with #
+2. There is a limit of no. of layers (no. of instructions in a Dockerfile) in docker (172)
+3. Create the Dockerfile in a empty directory and run build from there. Otherwise when build is done, everything from the build directory context is loaded in the container
+    a. So if you build it in / directory, everything from your dockerhost is loaded to the container
+4. Use docker ignore list to skip some directories from loading from the build context.
+
+Logs inspection/configuration changes in docker
+
+Better have a separate container for log inspection / configuration changes. Use --volumes-from for this
+
+Send siginals to services running inside a docker container
+
+1. Start your apache container
+    sudo docker run --name servicetest -P -d sumitdotcpm/ubuntuapache2:snapshot
+2. To restart apache
+    sudo docker kill --signal="USR1" servicetest
+    #USR1 is apache signal to restart gracefully
+3. To stop apache
+    sudo docker kill --signal="WINCH" servicetest
+    #WINCH is apache signal to stop gracefully
+    #TERM is apache signal for forceful shutdown
+    #Note in this case the container also stops, since the container runs only till its CMD command in Dockerfile is running
+    #Note the above apache2 signals don't work on apachectl
+    
+Nsenter
+
+Allows to get inside the container even if sshd is not running. Allows to enter in any namespace
+https://github.com/jpetazzo/nsenter
+
+1. Install nsenter
+    sudo docker run --rm -v /usr/local/bin:/target jpetazzo/nsenter
+2. Run a container
+    sudo docker run --name myapache2 -v /var/log/apache2 -d sumitdotcom/ubuntuapache2:snapshot
+3. Check its running
+    sudo docker ps -l
+4. Get the pid of the docker
+    sudo docker inspect --format {{.State/Pid}} myapache2
+    prints pid e.g. 13070
+5. Login to the container using nsenter
+    sudo nsenter --target 13070 --uts --pid --net --mount --ipc
+
+Another way to login
+6. sudo docker-enter myapache2
+    (merges the above steps 4 & 5)
+    
+If you want to run a command and get a output
+7. sudo docker-enter myapache2 ls -lrth
+
+Note: nsenter runs from the dockerhost and not from inside the container
+
+One can also use docker exec to login into the container. Using exec you can login inside the container
+8. docker exec -it myapache2 /bin/bash
+
+
+
